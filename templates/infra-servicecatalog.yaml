@@ -1,0 +1,85 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Amazon SageMaker Studio - AWS Service Catalog Portfolio for EMR clusters
+
+Parameters:
+  DeploymentName:
+    Type: String
+
+  ExtraPrincipal:
+    Type: String
+    Description: ARN of IAM Principal who should be able to use this portfolio.
+    Default: ""
+
+Conditions:
+  HasExtraPrincipal: !Not [!Equals [!Ref ExtraPrincipal, ""]]
+
+Resources:
+  # Based on https://github.com/aws-samples/emr-studio-samples/blob/82c74e421602fff188fa8644406393f4b615ebf2/full_studio_dependencies.yml#L421
+
+  ClusterTemplatePortfolio:
+    Type: AWS::ServiceCatalog::Portfolio
+    Properties:
+      DisplayName: !Sub ${AWS::StackName}-Portfolio
+      ProviderName: SageMaker Studio
+      Tags:
+        - { Key: Name, Value: !Sub "${AWS::StackName}-Portfolio" }
+
+  ClusterTemplatePortfolioPrincipalAssociationForEndUser:
+    Type: AWS::ServiceCatalog::PortfolioPrincipalAssociation
+    Properties:
+      PrincipalARN:
+        Fn::ImportValue: !Sub ${DeploymentName}-infra-studio-ExecutionRoleArn
+      PortfolioId: !Ref ClusterTemplatePortfolio
+      PrincipalType: IAM
+
+  ClusterTemplatePortfolioPrincipalAssociationForExtraPrincipal:
+    Type: AWS::ServiceCatalog::PortfolioPrincipalAssociation
+    Condition: HasExtraPrincipal
+    Properties:
+      PrincipalARN: !Ref ExtraPrincipal
+      PortfolioId: !Ref ClusterTemplatePortfolio
+      PrincipalType: IAM
+
+  ClusterProduct:
+    Type: AWS::ServiceCatalog::CloudFormationProduct
+    Properties:
+      Name: !Sub ${DeploymentName}-EMR-Cluster
+      Description: !Sub EMR Cluster for ${DeploymentName} environment
+      Owner: SageMaker Studio
+      ProvisioningArtifactParameters:
+        - Description: !Sub EMR Cluster for ${DeploymentName} environment
+          Name: !Sub ${DeploymentName}-EMR-Cluster
+          Info:
+            LoadTemplateFromURL: !Sub https://${AWS::AccountId}-${AWS::Region}-build-resources.s3-${AWS::Region}.amazonaws.com/${DeploymentName}/emr-cluster.yaml?v=2
+      Tags:
+        - { Key: Name, Value: !Sub "${AWS::StackName}-ClusterProduct" }
+        - { Key: "sagemaker:studio-visibility:emr", Value: "true" }
+
+  ClusterProductPortfolioAssociation:
+    Type: AWS::ServiceCatalog::PortfolioProductAssociation
+    Properties:
+      PortfolioId: !Ref ClusterTemplatePortfolio
+      ProductId: !Ref ClusterProduct
+
+  ClusterProductLaunchRoleConstraint:
+    Type: AWS::ServiceCatalog::LaunchRoleConstraint
+    DependsOn:
+      - ClusterProductPortfolioAssociation
+    Properties:
+      PortfolioId: !Ref ClusterTemplatePortfolio
+      ProductId: !Ref ClusterProduct
+      RoleArn:
+        Fn::ImportValue: !Sub ${DeploymentName}-infra-studio-ServiceCatalogRoleArn
+
+  PortfolioTagOption:
+    Type: AWS::ServiceCatalog::TagOption
+    Properties:
+      Active: true
+      Key: DeploymentName
+      Value: !Ref DeploymentName
+
+  PortfolioTagOptionAssociation:
+    Type: AWS::ServiceCatalog::TagOptionAssociation
+    Properties:
+      TagOptionId: !Ref PortfolioTagOption
+      ResourceId: !Ref ClusterTemplatePortfolio

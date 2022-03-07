@@ -1,0 +1,39 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+Description: Amazon Sagemaker Studio - Amazon EMR Infra
+
+Parameters:
+  DeploymentName:
+    Description: A prefix for the stacks in this setup.
+    Type: String
+
+Resources:
+
+  SageMakerToLivyOnEmrIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId:
+        Fn::ImportValue: !Sub ${DeploymentName}-infra-emr-MasterSecurityGroup
+      IpProtocol: tcp
+      FromPort: 8998
+      ToPort: 8998
+      SourceSecurityGroupId:
+        Fn::ImportValue: !Sub ${DeploymentName}-infra-studio-StudioSecurityGroup
+
+  StudioDomain:
+    Type: AWS::SageMaker::Domain
+    Properties:
+      AppNetworkAccessType: VpcOnly
+      AuthMode: SSO
+      DefaultUserSettings:
+        ExecutionRole:
+          Fn::ImportValue: !Sub ${DeploymentName}-infra-studio-ExecutionRoleArn
+        SecurityGroups:
+          - Fn::ImportValue: !Sub ${DeploymentName}-infra-studio-StudioSecurityGroup
+      DomainName: !Ref AWS::StackName
+      SubnetIds:
+        - !ImportValue infra-vpc-sn-nat-a
+        - !ImportValue infra-vpc-sn-nat-b
+      VpcId: !ImportValue infra-vpc-VpcId
+      Tags:
+        - { Key: Name, Value: !Ref AWS::StackName }

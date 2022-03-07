@@ -1,0 +1,128 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Amazon SageMaker Studio - Common EMR cluster template
+
+Parameters:
+  DeploymentName:
+    Description: Name of this EMR deployment. DO NOT CHANGE
+    Type: String
+    Default: DEPLOYMENT_DEFAULT
+    AllowedValues:
+      - DEPLOYMENT_DEFAULT
+
+  ClusterCapacityUnits:
+    Type: String
+    Description: Amount of compute capacity to provision to the cluster. 1 capacity unit = 4 vCPU and 8-32 GB of memory
+    Default: 1u
+
+  ReleaseLabel:
+    Description: EMR release to use
+    Type: String
+    Default: emr-6.5.0 # emr-5.33.1
+    AllowedValues:
+      - emr-6.5.0
+      - emr-6.4.0
+      - emr-5.33.1
+
+  EmrClusterName:
+    Type: String
+    Description: EMR cluster Name.
+
+  SageMakerProjectName:
+    Type: String
+    Description: Name of the project
+    Default: unset
+
+  SageMakerProjectId:
+    Type: String
+    Description: Service generated Id of the project.
+    Default: unset
+
+Conditions:
+  IsEmr6: !Equals [!Select [0, !Split ['.', !Select [1, !Split ['-', !Ref ReleaseLabel]]]], '6']
+
+Resources:
+  EMRCluster:
+    Type: AWS::EMR::Cluster
+    Properties:
+      Applications:
+        - { Name: JupyterEnterpriseGateway }
+        - { Name: Livy }
+        - { Name: Spark }
+        - { Name: Zeppelin }
+      Configurations:
+        - Fn::If:
+            - IsEmr6
+            - Classification: "container-executor"
+              Configurations:
+                - Classification: docker
+                  ConfigurationProperties:
+                    docker.trusted.registries: !Sub "local,centos,${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com"
+                    docker.privileged-containers.registries: !Sub "local,centos,${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com"
+            - !Ref AWS::NoValue
+        - Classification: "zeppelin-env"
+          Configurations:
+            - Classification: "export"
+              ConfigurationProperties:
+                ZEPPELIN_NOTEBOOK_STORAGE: org.apache.zeppelin.notebook.repo.S3NotebookRepo
+                ZEPPELIN_NOTEBOOK_S3_BUCKET:
+                  Fn::ImportValue: !Sub ${DeploymentName}-infra-emr-NotebookBucket
+                ZEPPELIN_NOTEBOOK_S3_USER: zeppelin
+      Instances:
+        CoreInstanceFleet:
+          InstanceTypeConfigs:
+            - { InstanceType: c5.xlarge }
+            - { InstanceType: c5a.xlarge }
+            - { InstanceType: c5d.xlarge }
+            - { InstanceType: m5.xlarge }
+            - { InstanceType: r5.xlarge }
+            - { InstanceType: r5d.xlarge }
+          LaunchSpecifications:
+              OnDemandSpecification:
+                AllocationStrategy: lowest-price
+              SpotSpecification:
+                AllocationStrategy: capacity-optimized
+                TimeoutAction: TERMINATE_CLUSTER
+                TimeoutDurationMinutes: 30
+          Name: Core
+          TargetOnDemandCapacity: 0
+          TargetSpotCapacity: !Join ['', !Split ['u', !Ref ClusterCapacityUnits]]
+        Ec2SubnetIds:
+          - !ImportValue infra-vpc-sn-public-a
+          - !ImportValue infra-vpc-sn-public-b
+        EmrManagedMasterSecurityGroup:
+          Fn::ImportValue: !Sub ${DeploymentName}-infra-emr-MasterSecurityGroup
+        EmrManagedSlaveSecurityGroup:
+          Fn::ImportValue: !Sub ${DeploymentName}-infra-emr-WorkerSecurityGroup
+        MasterInstanceFleet:
+          InstanceTypeConfigs:
+            - { InstanceType: c5.xlarge }
+            - { InstanceType: c5a.xlarge }
+            - { InstanceType: c5d.xlarge }
+            - { InstanceType: m5.xlarge }
+            - { InstanceType: r5.xlarge }
+            - { InstanceType: r5d.xlarge }
+          LaunchSpecifications:
+              OnDemandSpecification:
+                AllocationStrategy: lowest-price
+              SpotSpecification:
+                AllocationStrategy: capacity-optimized
+                TimeoutAction: TERMINATE_CLUSTER
+                TimeoutDurationMinutes: 30
+          Name: Driver
+          TargetOnDemandCapacity: 0
+          TargetSpotCapacity: 1
+        # ServiceAccessSecurityGroup:
+        #   Fn::ImportValue: !Sub ${DeploymentName}-infra-emr-ServiceAccessSecurityGroup
+      JobFlowRole:
+        Fn::ImportValue: !Sub ${DeploymentName}-infra-emr-EmrInstanceRoleProfile
+      LogUri:
+        Fn::Sub:
+          - "s3://${Bucket}/${DeploymentName}/emr/"
+          - { Bucket: !ImportValue "infra-buckets-LogBucket" }
+      Name: !Sub "${DeploymentName}-emr-cluster-${EmrClusterName}"
+      ReleaseLabel: !Ref ReleaseLabel
+      ServiceRole:
+        Fn::ImportValue: !Sub ${DeploymentName}-infra-emr-EmrServiceRole
+      Tags:
+        - { Key: Name, Value: !Sub "${DeploymentName}-emr-cluster-${EmrClusterName}" }
+      VisibleToAllUsers: true

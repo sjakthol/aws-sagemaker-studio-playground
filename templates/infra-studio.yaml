@@ -1,0 +1,174 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+Description: Amazon Sagemaker Studio - Infra resources for SageMaker Studio
+
+Parameters:
+  DeploymentName:
+    Description: A prefix for the stacks in this setup.
+    Type: String
+
+Resources:
+  WorkspaceBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${AWS::StackName}-workspace'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: DefaultRules
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 1
+            NoncurrentVersionExpirationInDays: 7
+      LoggingConfiguration:
+        DestinationBucketName: !ImportValue infra-buckets-LogBucket
+        LogFilePrefix: !Sub s3_access/bucket=${AWS::StackName}/
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - { Key: 'Name', Value: !Sub '${AWS::StackName}-workspace' }
+
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - sagemaker.amazonaws.com
+            Action:
+             - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSageMakerFullAccess
+      Path: /service-role/
+      Policies:
+      - PolicyName: EMRAccess
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+            - Sid: AllowClusterDiscovery
+              Effect: Allow
+              Action:
+                - elasticmapreduce:ListClusters
+              Resource: '*'
+            - Sid: AllowClusterDetailsAccess
+              Effect: Allow
+              Action:
+                - elasticmapreduce:CreatePersistentAppUI
+                - elasticmapreduce:DescribeCluster
+                - elasticmapreduce:DescribePersistentAppUI
+                - elasticmapreduce:DescribeSecurityConfiguration
+                - elasticmapreduce:GetOnClusterAppUIPresignedURL
+                - elasticmapreduce:GetPersistentAppUIPresignedURL
+                - elasticmapreduce:ListInstanceGroups
+                - elasticmapreduce:ListInstances
+              Resource:
+                - !Sub arn:aws:elasticmapreduce:${AWS::Region}:${AWS::AccountId}:cluster/*
+              Condition:
+                StringEquals:
+                  aws:ResourceTag/DeploymentName: !Ref DeploymentName
+            - Sid: AllowSagemakerProjectManagement
+              Effect: Allow
+              Action:
+                - sagemaker:CreateProject
+                - sagemaker:DeleteProject
+              Resource:
+                - !Sub arn:aws:sagemaker:${AWS::Region}:${AWS::AccountId}:project/*
+            - Sid: AllowEMRTemplateDiscovery
+              Effect: Allow
+              Action:
+                - servicecatalog:SearchProducts
+              Resource: '*'
+
+  StudioSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub ${AWS::StackName}-sg
+      GroupDescription: !Sub Security Group for SageMaker Studio ENIs of ${DeploymentName}
+      Tags:
+        - { Key: Name, Value: !Sub '${AWS::StackName}-sg' }
+      VpcId: !ImportValue infra-vpc-VpcId
+
+  StudioSecurityGroupSelfRule:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref StudioSecurityGroup
+      IpProtocol: tcp
+      FromPort: 8192
+      ToPort: 65535
+      SourceSecurityGroupId: !Ref StudioSecurityGroup
+
+  ## Service Catalog Roles ##
+
+  ServiceCatalogRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: servicecatalog.amazonaws.com
+            Action: sts:AssumeRole
+      Description: Role AWS Service Catalog uses to launch and terminate EMR clusters.
+      RoleName: !Sub ${AWS::StackName}-ServiceCatalogRole
+      Policies:
+        - PolicyName: !Sub ${AWS::StackName}-ServiceCatalogRolePolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Resource: "*" # trust Service Catalog to do the right thing
+                Action:
+                  - cloudformation:CreateStack
+                  - cloudformation:DeleteStack
+                  - cloudformation:DescribeStackEvents
+                  - cloudformation:DescribeStacks
+                  - cloudformation:GetTemplateSummary
+                  - cloudformation:SetStackPolicy
+                  - cloudformation:UpdateStack
+                  - cloudformation:ValidateTemplate
+                  - elasticmapreduce:DescribeCluster
+                  - elasticmapreduce:ListInstanceFleets
+                  - elasticmapreduce:RunJobFlow
+                  - elasticmapreduce:TerminateJobFlows
+              - Effect: Allow
+                Action:
+                  - "iam:PassRole"
+                Resource:
+                  - Fn::ImportValue: !Sub ${DeploymentName}-infra-emr-EmrInstanceRole
+                  - Fn::ImportValue: !Sub ${DeploymentName}-infra-emr-EmrServiceRole
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    s3:ExistingObjectTag/servicecatalog:provisioning: true
+
+Outputs:
+  StudioSecurityGroup:
+    Description: Security Group for SageMaker Studio ENIs
+    Value: !GetAtt StudioSecurityGroup.GroupId
+    Export:
+      Name: !Sub "${AWS::StackName}-StudioSecurityGroup"
+
+  ExecutionRoleArn:
+    Description: The ARN of the IAM role to use as SageMaker Studio execution role
+    Value: !GetAtt ExecutionRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-ExecutionRoleArn"
+
+  ServiceCatalogRoleArn:
+    Description: The ARN of the IAM role for Service Catalog to launch EMR clusters with
+    Value: !GetAtt ServiceCatalogRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-ServiceCatalogRoleArn"
