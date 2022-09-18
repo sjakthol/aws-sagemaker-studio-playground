@@ -32,7 +32,7 @@ Resources:
     Type: AWS::SageMaker::Domain
     Properties:
       AppNetworkAccessType: VpcOnly
-      AuthMode: SSO
+      AuthMode: IAM
       DefaultUserSettings:
         ExecutionRole:
           Fn::ImportValue: !Sub ${DeploymentName}-infra-studio-ExecutionRoleArn
