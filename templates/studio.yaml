@@ -1,6 +1,6 @@
 ---
 AWSTemplateFormatVersion: 2010-09-09
-Description: Amazon Sagemaker Studio - Amazon EMR Infra
+Description: Amazon Sagemaker Studio - SageMaker Studio Domain
 
 Parameters:
   DeploymentName:
