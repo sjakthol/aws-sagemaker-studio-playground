@@ -7,6 +7,14 @@ Parameters:
     Description: A prefix for the stacks in this setup.
     Type: String
 
+Mappings:
+  # JupyterLabImageArn from https://docs.aws.amazon.com/sagemaker/latest/dg/studio-jl.html#studio-jl-set-cli
+  RegionalSettings:
+    eu-west-1:
+      JupyterLabImageArn: arn:aws:sagemaker:eu-west-1:470317259841:image/jupyter-server-3
+    eu-north-1:
+      JupyterLabImageArn: arn:aws:sagemaker:eu-north-1:243637512696:image/jupyter-server-3
+
 Resources:
 
   SageMakerToLivyOnEmrIngress:
@@ -30,6 +38,10 @@ Resources:
           Fn::ImportValue: !Sub ${DeploymentName}-infra-studio-ExecutionRoleArn
         SecurityGroups:
           - Fn::ImportValue: !Sub ${DeploymentName}-infra-studio-StudioSecurityGroup
+        JupyterServerAppSettings:
+          DefaultResourceSpec:
+            InstanceType: system
+            SageMakerImageArn: !FindInMap [RegionalSettings, !Ref AWS::Region, JupyterLabImageArn]
       DomainName: !Ref AWS::StackName
       SubnetIds:
         - !ImportValue infra-vpc-sn-nat-a
